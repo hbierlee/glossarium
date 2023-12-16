@@ -39,3 +39,4 @@ cmd = "typst compile example/example.typ --root . "
 [[after_push]]
 name = "Create local version of package"
 cmd = "make local"
+   
