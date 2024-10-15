@@ -74,12 +74,14 @@
 // The labels with the key
 #let __query_labels_with_key(loc, key, before: false) = {
   if before {
-    return query(
-      selector(label(__glossary_label_prefix + key)).before(
-        loc,
-        inclusive: false,
-      ),
-    )
+    let s = selector(
+      label(__glossary_label_prefix + key)
+    ).before(loc, inclusive: false)
+    let chapters = query(heading.where(level: 1).before(loc))
+    if chapters.len() > 0 {
+      s = s.after(chapters.first().location())
+    }
+    return query(s)
   } else {
     return query(selector(label(__glossary_label_prefix + key)))
   }
