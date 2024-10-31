@@ -18,7 +18,7 @@
 #let __glossary_entries = state("__glossary_entries", (:))
 
 // glossarium version
-#let glossarium_version = "0.5.0"
+#let glossarium_version = "0.5.1"
 
 // error prefix
 #let __glossarium_error_prefix = "glossarium@" + glossarium_version + " error : "
@@ -182,6 +182,7 @@
     // Conditions
     let is-first-or-long = __is_first_or_long(here(), key, long: long)
     let has-long = has-long(entry)
+    let has-short = has-short(entry)
 
     // Link text
     // 1. If `display` attribute is provided, use it
@@ -202,7 +203,11 @@
     if display != none {
       link-text += [#display]
     } else if is-first-or-long and has-long and long != false {
-      link-text += [#ent-long (#ent-short#suffix)]
+      if has-short {
+        link-text += [#ent-long (#ent-short#suffix)]
+      } else {
+        link-text += [#ent-long]
+      }
     } else {
       link-text += [#ent-short#suffix]
     }
@@ -240,15 +245,19 @@
     let link-text = none
     let article = none
     if is-first-or-long and has-long and long != false {
-      link-text = [#ent-long (#ent-short#suffix)]
+      if has-short {
+        link-text += [#ent-long (#ent-short#suffix)]
+      } else {
+        link-text += [#ent-long]
+      }
       article = ent-artlong
     } else if has-short {
       // Default to short
-      link-text += [#ent-short#suffix]
-    } else {
-      // Default to short
-      link-text = [#entry.short#suffix]
+      link-text = [#ent-short#suffix]
       article = ent-artshort
+    } else {
+      link-text += [#ent-long#suffix]
+      article = ent-artlong
     }
 
     // Return
@@ -303,12 +312,16 @@
 
     // Link text
     let link-text = if is-first-or-long and has-long and long != false {
-      [#longplural (#shortplural)]
+      if has-short {
+        [#longplural (#shortplural)]
+      } else {
+        [#longplural]
+      }
     } else if has-short {
       // Default to short
       [#shortplural]
     } else {
-      [#shortplural]
+      [#longplural]
     }
 
     return __link_and_label(entry.key, link-text)
@@ -460,6 +473,12 @@
 // #show: make-glossary
 // ```
 #let make-glossary(body) = {
+  // Fix figure caption alignement
+  show figure.where(kind: __glossarium_figure): it => if sys.version >= version(0, 12, 0) {
+    align(start, it.caption)
+  } else {
+    it.caption
+  }
   // Select all figure refs and filter by __glossarium_figure
   // Transform the ref to the glossary term
   show ref: r => {
@@ -480,11 +499,11 @@
   body
 }
 
-// __normalize_entry_list(entry-list) -> list<dictionary>
+// __normalize_entry_list(entry-list) -> array<dictionary>
 // Add default values to each entry.
 //
 // # Arguments
-//  entry-list (list<dictionary>): the list of entries
+//  entry-list (array<dictionary>): the list of entries
 //
 // # Returns
 // The normalized entry list
@@ -547,17 +566,76 @@
 }
 
 // count-refs(entry) -> int
-// Count the number of references to the entry
+// Count the number of references to the entry in the document
 //
 // # Arguments
 // entry (dictionary): the entry
 //
 // # Returns
 // The number of references to the entry
+//
+// # Usage
+// ```typ
+// #context count-refs((key: "potato"))
+// ```
 #let count-refs(entry) = {
   let refs = __query_labels_with_key(here(), entry.key)
   return refs.len()
 }
+
+// count-all-refs(entry-list: none, groups: none) -> array<(str, int)>
+// Return the number of references for each entry in the document
+
+// # Arguments
+// entry-list (array<dictionary>): the list of entries. Defaults to all entries
+// groups (array<str>): the list of groups to be considered. `""` is the default group.
+//
+// # Returns
+// The number of references for each entry across the document
+//
+// # Usage
+// ```typ
+// #context count-all-refs()
+// ```
+#let count-all-refs(entry-list: none, groups: none) = {
+  let el = if entry-list == none {
+    __glossary_entries.get().values()
+  } else {
+    entry-list
+  }
+  let g = if groups == none {
+    el.map(x => x.at("group", default: "")).dedup()
+  } else if type(groups) == array {
+    groups
+  } else {
+    panic("groups must be an array of strings, e.g., (\"\",)")
+  }
+  el = el.filter(x => x.at("group", default: "") in g)
+  let counts = el.map(x => (x.key, count-refs(x)))
+  return counts
+}
+
+// there-are-refs(entry-list: none, groups: none) -> bool
+// Check if there are references to the entries in the document
+//
+// # Arguments
+// entry-list (array<dictionary>): the list of entries. Defaults to all entries
+// groups (array<str>): the list of groups to be considered. `""` is the default group.
+//
+// # Returns
+// True if there are references to the entries in the document
+//
+// # Usage
+// ```typ
+// #context if there-are-refs() {
+//   [= Glossary]
+// }
+// ```
+#let there-are-refs(entry-list: none, groups: none) = {
+  let counts = count-all-refs(entry-list: entry-list, groups: groups)
+  return counts.to-dict().values().any(x => x > 0)
+}
+
 
 // default-print-back-references(entry) -> contextual content
 // Print the back references of the entry
@@ -609,6 +687,7 @@
 //  entry,
 //  show-all: false,
 //  disable-back-references: false,
+//  minimum-refs: 1,
 //  user-print-title: default-print-title,
 //  user-print-description: default-print-description,
 //  user-print-back-references: default-print-back-references,
@@ -619,6 +698,7 @@
 //  entry (dictionary): the entry
 //  show-all (bool): show all entries
 //  disable-back-references (bool): disable back references
+//  minimum-refs (int): minimum number of references to show the entry
 //  ...
 //
 // # Returns
@@ -627,6 +707,7 @@
   entry,
   show-all: false,
   disable-back-references: false,
+  minimum-refs: 1,
   user-print-title: default-print-title,
   user-print-description: default-print-description,
   user-print-back-references: default-print-back-references,
@@ -634,7 +715,7 @@
   context {
     let caption = []
 
-    if show-all == true or count-refs(entry) != 0 {
+    if show-all == true or count-refs(entry) >= minimum-refs {
       // Title
       caption += user-print-title(entry)
 
@@ -660,6 +741,7 @@
 //  entry,
 //  show-all: false,
 //  disable-back-references: false,
+//  minimum-refs: 1,
 //  user-print-gloss: default-print-gloss,
 //  user-print-title: default-print-title,
 //  user-print-description: default-print-description,
@@ -671,6 +753,7 @@
 //  entry (dictionary): the entry
 //  show-all (bool): show all entries
 //  disable-back-references (bool): disable back references
+//  minimum-refs (int): minimum number of references to show the entry
 //  ..;
 //
 // # Returns
@@ -679,17 +762,13 @@
   entry,
   show-all: false,
   disable-back-references: false,
+  minimum-refs: 1,
   user-print-gloss: default-print-gloss,
   user-print-title: default-print-title,
   user-print-description: default-print-description,
   user-print-back-references: default-print-back-references,
 ) = {
   return [
-    #show figure.where(kind: __glossarium_figure): it => if sys.version >= version(0, 12, 0) {
-      align(start, it.caption)
-    } else {
-      it.caption
-    }
     #par(
       hanging-indent: 1em,
       first-line-indent: 0em,
@@ -702,6 +781,7 @@
           entry,
           show-all: show-all,
           disable-back-references: disable-back-references,
+          minimum-refs: minimum-refs,
           user-print-title: user-print-title,
           user-print-description: user-print-description,
           user-print-back-references: user-print-back-references,
@@ -729,6 +809,8 @@
 //  groups,
 //  show-all: false,
 //  disable-back-references: false,
+//  group-heading-level: none,
+//  minimum-refs: 1,
 //  user-print-reference: default-print-reference
 //  user-group-break: default-group-break,
 //  user-print-gloss: default-print-gloss,
@@ -743,6 +825,8 @@
 //  groups (array<str>): the list of groups
 //  show-all (bool): show all entries
 //  disable-back-references (bool): disable back references
+//  group-heading-level (int): force the level of the group heading
+//  minimum-refs (int): minimum number of references to show the entry
 //  ...
 //
 // # Warnings
@@ -757,6 +841,8 @@
   groups,
   show-all: false,
   disable-back-references: false,
+  group-heading-level: none,
+  minimum-refs: 1,
   user-print-reference: default-print-reference,
   user-group-break: default-group-break,
   user-print-gloss: default-print-gloss,
@@ -765,16 +851,19 @@
   user-print-back-references: default-print-back-references,
 ) = {
   let body = []
-  let previous-headings = query(selector(heading).before(here()))
-  let group-heading-level = 1
-  if previous-headings.len() != 0 {
-    group-heading-level = previous-headings.last().level
+  if group-heading-level == none {
+    let previous-headings = query(selector(heading).before(here()))
+    if previous-headings.len() != 0 {
+      group-heading-level = previous-headings.last().level + 1
+    } else {
+      group-heading-level = 1
+    }
   }
   for group in groups.sorted() {
     let group-entries = entries.filter(x => x.at("group") == group)
     let group-ref-counts = group-entries.map(count-refs)
 
-    let print-group = (group != "" and (show-all == true or group-ref-counts.any(x => x > 0)))
+    let print-group = (group != "" and (show-all == true or group-ref-counts.any(x => x >= minimum-refs)))
 
     // Only print group name if any entries are referenced
     if print-group {
@@ -786,6 +875,7 @@
         entry,
         show-all: show-all,
         disable-back-references: disable-back-references,
+        minimum-refs: minimum-refs,
         user-print-gloss: user-print-gloss,
         user-print-title: user-print-title,
         user-print-description: user-print-description,
@@ -833,8 +923,11 @@
 
 // print-glossary(
 //  entry-list,
+//  groups: (),
 //  show-all: false,
 //  disable-back-references: false,
+//  group-heading-level: none,
+//  minimum-refs: 1,
 //  user-print-glossary: default-print-glossary,
 //  user-print-reference: default-print-reference,
 //  user-group-break: default-group-break,
@@ -846,9 +939,12 @@
 // Print the glossary
 //
 // # Arguments
-//  entry-list (list<dictionary>): the list of entries
+//  entry-list (array<dictionary>): the list of entries
+//  groups (array<str>): the list of groups to be displayed. `""` is the default group.
 //  show-all (bool): show all entries
 //  disable-back-references (bool): disable back references
+//  group-heading-level (int): force the level of the group heading
+//  minimum-refs (int): minimum number of references to show the entry
 //  ...
 //
 // # Warnings
@@ -863,8 +959,11 @@
 // ```
 #let print-glossary(
   entry-list,
+  groups: (),
   show-all: false,
   disable-back-references: false,
+  group-heading-level: none,
+  minimum-refs: 1,
   user-print-glossary: default-print-glossary,
   user-print-reference: default-print-reference,
   user-group-break: default-group-break,
@@ -875,6 +974,9 @@
 ) = {
   if entry-list == none {
     panic("entry-list is required")
+  }
+  if type(groups) != array {
+    panic("groups must be an array")
   }
   let entries = ()
   if sys.version <= version(0, 11, 1) {
@@ -894,16 +996,26 @@
   // Glossary
   let body = []
   body += context {
+    // Entries
     let el = if sys.version <= version(0, 11, 1) {
       entries
     } else if entry-list != none {
       __glossary_entries.get().values().filter(x => (x.key in entry-list.map(x => x.key)))
     }
+
+    // Groups
+    let g = if groups == () {
+      el.map(x => x.at("group")).dedup()
+    } else {
+      groups
+    }
     user-print-glossary(
       el,
-      el.map(x => x.at("group")).dedup(),
+      g,
       show-all: show-all,
       disable-back-references: disable-back-references,
+      group-heading-level: group-heading-level,
+      minimum-refs: minimum-refs,
       user-print-reference: user-print-reference,
       user-group-break: user-group-break,
       user-print-gloss: user-print-gloss,
