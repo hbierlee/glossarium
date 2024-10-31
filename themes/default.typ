@@ -77,9 +77,9 @@
     let s = selector(
       label(__glossary_label_prefix + key)
     ).before(loc, inclusive: false)
-    let chapters = query(heading.where(level: 1).before(loc))
+    let chapters = query(selector(heading.where(level: 1)).before(loc))
     if chapters.len() > 0 {
-      s = s.after(chapters.first().location())
+      s = s.after(chapters.last().location())
     }
     return query(s)
   } else {
